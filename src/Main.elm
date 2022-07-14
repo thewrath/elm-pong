@@ -32,6 +32,10 @@ rewardSize =
     40
 
 
+type alias Number =
+    Float
+
+
 type alias Paddle =
     { position : { x : Number, y : Number }
     , velocity : Number
