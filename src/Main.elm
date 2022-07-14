@@ -24,6 +24,14 @@ ballSize =
     15
 
 
+lifeSize =
+    10
+
+
+rewardSize =
+    40
+
+
 type alias Paddle =
     { position : { x : Number, y : Number }
     , velocity : Number
@@ -36,99 +44,195 @@ type alias Ball =
     }
 
 
+type Reward
+    = Claimed
+    | Unclaimed
+        { position : ( Number, Number )
+        , value : Int
+        }
+
+
 type alias Box =
     { x : Number, y : Number, w : Number, h : Number }
 
 
+type alias Memory =
+    { lives : Int
+    , paddleA : Paddle
+    , paddleB : Paddle
+    , ball : Ball
+    , nextReward : Reward
+    , score : Int
+    }
+
+
+type GameState
+    = Pause
+    | Running Memory
+    | Over
+
+
 main =
-    game view
-        update
-        { paddleA =
-            { position = { x = 0, y = 400 }
-            , velocity = 0
-            }
-        , paddleB =
-            { position = { x = 0, y = -400 }
-            , velocity = 0
-            }
-        , ball =
-            { position = ( 0, 0 )
-            , velocity = ( -ballSpeed, -ballSpeed )
-            }
+    game view update Pause
+
+
+initialMemory =
+    { lives = 3
+    , paddleA =
+        { position = { x = 0, y = 400 }
+        , velocity = 0
         }
+    , paddleB =
+        { position = { x = 0, y = -400 }
+        , velocity = 0
+        }
+    , ball =
+        { position = ( 0, 0 )
+        , velocity = ( 0, -ballSpeed )
+        }
+    , nextReward =
+        Claimed
+    , score = 0
+    }
 
 
-view computer ({ paddleA, paddleB, ball } as memory) =
+view computer state =
     let
         w =
             computer.screen.width
 
         h =
             computer.screen.height
-
-        ( bx, by ) =
-            ball.position
     in
-    [ rectangle black w h
-    , rectangle blue paddleWidth paddleHeight
-        |> move paddleA.position.x paddleA.position.y
-    , rectangle red paddleWidth paddleHeight
-        |> move paddleB.position.x paddleB.position.y
-    , square white ballSize
-        |> move bx by
-    ]
+    case state of
+        Running ({ paddleA, paddleB, ball, nextReward, lives, score } as memory) ->
+            let
+                ( bx, by ) =
+                    ball.position
+            in
+            [ rectangle black w h
+            , rectangle blue paddleWidth paddleHeight
+                |> move paddleA.position.x paddleA.position.y
+            , rectangle red paddleWidth paddleHeight
+                |> move paddleB.position.x paddleB.position.y
+            , square white ballSize
+                |> move bx by
+            , words white ("Score: " ++ String.fromInt score)
+                |> move -100 -10
+                |> fromTopRight computer.screen
+            ]
+                ++ renderLives computer.screen lives
+                ++ renderReward nextReward
+
+        Pause ->
+            [ rectangle black w h, words white "Pause, press space to start" ]
+
+        Over ->
+            [ rectangle black w h, words white "Game Over, press space to start" ]
 
 
-update computer ({ paddleA, paddleB, ball } as memory) =
+renderLives : Screen -> Int -> List Shape
+renderLives screen lives =
+    List.repeat lives (rectangle white lifeSize lifeSize)
+        |> List.indexedMap (\i x -> move (lifeSize + (toFloat i * 20)) -lifeSize x |> fromTopLeft screen)
+
+
+renderReward : Reward -> List Shape
+renderReward reward =
+    case reward of
+        Claimed ->
+            []
+
+        Unclaimed r ->
+            let
+                ( rx, ry ) =
+                    r.position
+            in
+            square yellow rewardSize
+                |> move rx ry
+                |> List.singleton
+
+
+update computer state =
+    case state of
+        Running ({ paddleA, paddleB, ball, nextReward } as memory) ->
+            let
+                ( bx, by ) =
+                    ball.position
+
+                ( vx, vy ) =
+                    ball.velocity
+            in
+            Running
+                ({ memory
+                    | paddleA = { paddleA | velocity = toX computer.keyboard * -paddleSpeed } |> movePaddle computer
+                    , paddleB = { paddleB | velocity = toX computer.keyboard * paddleSpeed } |> movePaddle computer
+                    , ball =
+                        { position = clampToScreen computer ( bx + vx, by + vy ), velocity = ball.velocity }
+                            |> handleWallCollision computer.screen
+                            |> handlePaddleCollision paddleA
+                            |> handlePaddleCollision paddleB
+                    , nextReward = handleRewardCollision ball nextReward
+                 }
+                    |> handleDestroyBall computer.screen
+                    |> generateReward computer.time
+                )
+                |> handleGameOver
+
+        Pause ->
+            if computer.keyboard.space then
+                Running initialMemory
+
+            else
+                state
+
+        Over ->
+            if computer.keyboard.space then
+                Running initialMemory
+
+            else
+                state
+
+
+movePaddle : Computer -> Paddle -> Paddle
+movePaddle computer paddle =
+    { paddle | position = { x = clampToScreenWidth computer (paddle.position.x + paddle.velocity), y = paddle.position.y } }
+
+
+handleRewardCollision : Ball -> Reward -> Reward
+handleRewardCollision ball reward =
+    case reward of
+        Claimed ->
+            reward
+
+        Unclaimed r ->
+            if checkRectCollision (rewardBox r) (ballBox ball) then
+                Claimed
+
+            else
+                reward
+
+
+handlePaddleCollision : Paddle -> Ball -> Ball
+handlePaddleCollision paddle ball =
     let
-        ( bx, by ) =
-            ball.position
-
         ( vx, vy ) =
             ball.velocity
     in
-    { memory
-        | paddleA = { paddleA | velocity = toX computer.keyboard * paddleSpeed } |> move_paddle computer
-        , paddleB = { paddleB | velocity = toY computer.keyboard * paddleSpeed } |> move_paddle computer
-        , ball =
-            { position = clamp_to_screen computer ( bx + vx, by + vy ), velocity = ball.velocity }
-                |> handle_wall_collision computer.screen
-                |> handle_paddle_collision paddleA
-                |> handle_paddle_collision paddleB
-    }
-
-
-move_paddle : Computer -> Paddle -> Paddle
-move_paddle computer paddle =
-    { paddle | position = { x = clamp_to_screen_width computer (paddle.position.x + paddle.velocity), y = paddle.position.y } }
-
-
-handle_paddle_collision : Paddle -> Ball -> Ball
-handle_paddle_collision paddle ball =
-    let
-        ( vx, vy ) =
-            ball.velocity
-
-        _ =
-            Debug.log "Paddle velocity" paddle.velocity
-
-        paddle_box =
-            { x = paddle.position.x, y = paddle.position.y, w = paddleWidth, h = paddleHeight }
-    in
-    if check_rect_collision paddle_box (ball_box ball) then
-        { ball | velocity = lift_ball paddle.velocity ( vx, -vy ) }
+    if checkRectCollision (paddleBox paddle) (ballBox ball) then
+        { ball | velocity = liftBall paddle.velocity ( vx, -vy ) }
 
     else
         ball
 
 
-lift_ball : Number -> ( Number, Number ) -> ( Number, Number )
-lift_ball paddle_velocity ( vx, vy ) =
-    ( abs ballSpeed * sign_of paddle_velocity, vy )
+liftBall : Number -> ( Number, Number ) -> ( Number, Number )
+liftBall paddle_velocity ( vx, vy ) =
+    ( abs ballSpeed * signOf paddle_velocity, vy )
 
 
-handle_wall_collision : Screen -> Ball -> Ball
-handle_wall_collision screen ball =
+handleWallCollision : Screen -> Ball -> Ball
+handleWallCollision screen ball =
     let
         ( vx, vy ) =
             ball.velocity
@@ -139,53 +243,125 @@ handle_wall_collision screen ball =
     if x <= screen.left || x >= screen.right then
         { ball | velocity = ( -vx, vy ) }
 
-    else if y <= screen.bottom || y >= screen.top then
-        { ball | velocity = ( vx, -vy ) }
-        -- Game Over case
-
     else
         ball
 
 
-ball_box : Ball -> Box
-ball_box ball =
-    { x = first ball.position, y = second ball.position, w = ballSize, h = ballSize }
+handleGameOver : GameState -> GameState
+handleGameOver state =
+    case state of
+        Running memory ->
+            if memory.lives <= 0 then
+                Over
+
+            else
+                state
+
+        _ ->
+            state
 
 
-check_rect_collision : Box -> Box -> Bool
-check_rect_collision a b =
+handleDestroyBall : Screen -> Memory -> Memory
+handleDestroyBall screen ({ ball, lives } as memory) =
+    let
+        ( x, y ) =
+            ball.position
+    in
+    if y <= screen.bottom || y >= screen.top then
+        { memory
+            | lives = lives - 1
+            , ball =
+                { position = ( 0, 0 )
+                , velocity = ( 0, -ballSpeed )
+                }
+        }
+
+    else
+        memory
+
+
+generateReward : Time -> Memory -> Memory
+generateReward time ({ nextReward } as memory) =
+    case nextReward of
+        Unclaimed _ ->
+            memory
+
+        Claimed ->
+            { memory
+                | nextReward =
+                    Unclaimed
+                        { position = ( toFloat (fakeRandomInt time 0 100), toFloat (fakeRandomInt time 0 100) )
+                        , value = 10
+                        }
+            }
+
+
+ballBox : Ball -> Box
+ballBox ball =
+    { x = first ball.position - ballSize / 2, y = second ball.position - ballSize / 2, w = ballSize, h = ballSize }
+
+
+paddleBox : Paddle -> Box
+paddleBox paddle =
+    { x = paddle.position.x - paddleWidth / 2, y = paddle.position.y - paddleHeight / 2, w = paddleWidth, h = paddleHeight }
+
+
+rewardBox : { position : ( Number, Number ), value : Int } -> Box
+rewardBox reward =
+    { x = first reward.position - rewardSize / 2, y = second reward.position - rewardSize / 2, w = rewardSize, h = rewardSize }
+
+
+checkRectCollision : Box -> Box -> Bool
+checkRectCollision a b =
     a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.h + a.y > b.y
 
 
-clamp_to_screen_width : Computer -> Number -> Number
-clamp_to_screen_width computer value =
+clampToScreenWidth : Computer -> Number -> Number
+clampToScreenWidth computer value =
     clamp -(computer.screen.width / 2) (computer.screen.width / 2) value
 
 
-clamp_to_screen_height : Computer -> Number -> Number
-clamp_to_screen_height computer value =
+clampToScreenHeight : Computer -> Number -> Number
+clampToScreenHeight computer value =
     clamp -(computer.screen.height / 2) (computer.screen.height / 2) value
 
 
-clamp_to_screen : Computer -> ( Number, Number ) -> ( Number, Number )
-clamp_to_screen computer ( x, y ) =
-    ( clamp_to_screen_width computer x, clamp_to_screen_height computer y )
+clampToScreen : Computer -> ( Number, Number ) -> ( Number, Number )
+clampToScreen computer ( x, y ) =
+    ( clampToScreenWidth computer x, clampToScreenHeight computer y )
 
 
-vec_to_tuple : { x : Number, y : Number } -> ( Number, Number )
-vec_to_tuple vec =
+vecToTuple : { x : Number, y : Number } -> ( Number, Number )
+vecToTuple vec =
     ( vec.x, vec.y )
 
 
-tuple_to_vec : ( Number, Number ) -> { x : Number, y : Number }
-tuple_to_vec tuple =
+tupleToVec : ( Number, Number ) -> { x : Number, y : Number }
+tupleToVec tuple =
     { x = first tuple, y = second tuple }
 
 
-sign_of : Number -> Number
-sign_of n =
+signOf : Number -> Number
+signOf n =
     if n == 0 then
         0
 
     else
         n / abs n
+
+
+fromTopLeft : Screen -> Shape -> Shape
+fromTopLeft screen shape =
+    shape
+        |> move screen.left screen.top
+
+
+fromTopRight : Screen -> Shape -> Shape
+fromTopRight screen shape =
+    shape
+        |> move screen.right screen.top
+
+
+fakeRandomInt : Time -> Int -> Int -> Int
+fakeRandomInt time a b =
+    a + round (1 + cos (spin 0.1 time)) * (b // 2)
