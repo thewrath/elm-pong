@@ -16,7 +16,7 @@ paddleHeight =
     15
 
 
-ballSpeed =
+initialBallSpeed =
     5
 
 
@@ -45,6 +45,7 @@ type alias Paddle =
 type alias Ball =
     { position : ( Number, Number )
     , velocity : ( Number, Number )
+    , speed : Number
     }
 
 
@@ -80,6 +81,16 @@ main =
     game view update Pause
 
 
+initialBall =
+    { position = ( 0, 0 )
+    , velocity =
+        ( 0
+        , -initialBallSpeed
+        )
+    , speed = initialBallSpeed
+    }
+
+
 initialMemory =
     { lives = 3
     , paddleA =
@@ -90,10 +101,7 @@ initialMemory =
         { position = { x = 0, y = -400 }
         , velocity = 0
         }
-    , ball =
-        { position = ( 0, 0 )
-        , velocity = ( 0, -ballSpeed )
-        }
+    , ball = initialBall
     , nextReward =
         Claimed
     , score = 0
@@ -152,7 +160,7 @@ renderReward reward =
                 ( rx, ry ) =
                     r.position
             in
-            square yellow rewardSize
+            rectangle yellow paddleWidth paddleHeight
                 |> move rx ry
                 |> List.singleton
 
@@ -169,16 +177,16 @@ update computer state =
             in
             Running
                 ({ memory
-                    | paddleA = { paddleA | velocity = toX computer.keyboard * -paddleSpeed } |> movePaddle computer
+                    | paddleA = { paddleA | velocity = toX computer.keyboard * paddleSpeed } |> movePaddle computer
                     , paddleB = { paddleB | velocity = toX computer.keyboard * paddleSpeed } |> movePaddle computer
                     , ball =
-                        { position = clampToScreen computer ( bx + vx, by + vy ), velocity = ball.velocity }
+                        { ball | position = clampToScreen computer ( bx + vx, by + vy ), velocity = ball.velocity }
                             |> handleWallCollision computer.screen
                             |> handlePaddleCollision paddleA
                             |> handlePaddleCollision paddleB
-                    , nextReward = handleRewardCollision ball nextReward
                  }
                     |> handleDestroyBall computer.screen
+                    |> handleRewardCollision
                     |> generateReward computer.time
                 )
                 |> handleGameOver
@@ -203,36 +211,36 @@ movePaddle computer paddle =
     { paddle | position = { x = clampToScreenWidth computer (paddle.position.x + paddle.velocity), y = paddle.position.y } }
 
 
-handleRewardCollision : Ball -> Reward -> Reward
-handleRewardCollision ball reward =
-    case reward of
+handleRewardCollision : Memory -> Memory
+handleRewardCollision ({ ball, nextReward, score } as memory) =
+    case nextReward of
         Claimed ->
-            reward
+            memory
 
         Unclaimed r ->
             if checkRectCollision (rewardBox r) (ballBox ball) then
-                Claimed
+                { memory
+                    | nextReward = Claimed
+                    , score = score + r.value
+                    , ball = { ball | speed = ball.speed + 2 }
+                }
 
             else
-                reward
+                memory
 
 
 handlePaddleCollision : Paddle -> Ball -> Ball
 handlePaddleCollision paddle ball =
-    let
-        ( vx, vy ) =
-            ball.velocity
-    in
     if checkRectCollision (paddleBox paddle) (ballBox ball) then
-        { ball | velocity = liftBall paddle.velocity ( vx, -vy ) }
+        liftBall paddle.velocity ball
 
     else
         ball
 
 
-liftBall : Number -> ( Number, Number ) -> ( Number, Number )
-liftBall paddle_velocity ( vx, vy ) =
-    ( abs ballSpeed * signOf paddle_velocity, vy )
+liftBall : Number -> Ball -> Ball
+liftBall paddle_velocity ({ velocity, speed } as ball) =
+    { ball | velocity = ( abs speed * signOf paddle_velocity, -(second velocity) ) }
 
 
 handleWallCollision : Screen -> Ball -> Ball
@@ -274,10 +282,7 @@ handleDestroyBall screen ({ ball, lives } as memory) =
     if y <= screen.bottom || y >= screen.top then
         { memory
             | lives = lives - 1
-            , ball =
-                { position = ( 0, 0 )
-                , velocity = ( 0, -ballSpeed )
-                }
+            , ball = initialBall
         }
 
     else
@@ -312,7 +317,7 @@ paddleBox paddle =
 
 rewardBox : { position : ( Number, Number ), value : Int } -> Box
 rewardBox reward =
-    { x = first reward.position - rewardSize / 2, y = second reward.position - rewardSize / 2, w = rewardSize, h = rewardSize }
+    { x = first reward.position - paddleWidth / 2, y = second reward.position - paddleHeight / 2, w = paddleWidth, h = paddleHeight }
 
 
 checkRectCollision : Box -> Box -> Bool
